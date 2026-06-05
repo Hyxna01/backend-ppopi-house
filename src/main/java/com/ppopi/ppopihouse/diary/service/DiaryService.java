@@ -92,7 +92,6 @@ public class DiaryService {
     /**
      * 특정 다이어리 상세 조회 (단일용)
      */
-    @Transactional(readOnly = true)
     public DiaryDto.DiaryDetailResponse getDiaryDetail(Long memberId, Long diaryId) {
         DiaryEntry entry = diaryRepository.findById(diaryId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 다이어리입니다."));
@@ -101,7 +100,6 @@ public class DiaryService {
             throw new SecurityException("접근 권한이 없습니다.");
         }
 
-        // 진단 증상 파싱 로직 적용
         List<DiaryDto.SymptomResponse> symptomResponses = parseSymptomIds(
                 entry.getDiagnosis() != null ? entry.getDiagnosis().getSymptomIds() : null
         );
@@ -118,7 +116,7 @@ public class DiaryService {
     }
 
     /**
-     * [핵심] symptom_ids ("1,3")를 List<SymptomResponse>로 변환하는 헬퍼 메서드
+     * symptom_ids ("1,3")를 List<SymptomResponse>로 변환하는 헬퍼 메서드
      */
     private List<DiaryDto.SymptomResponse> parseSymptomIds(String rawSymptomIds) {
         if (rawSymptomIds == null || rawSymptomIds.isBlank()) {
@@ -145,8 +143,6 @@ public class DiaryService {
      * 다이어리 작성을 위한 일반 건강 체크리스트 전체 조회 (DB 기반)
      */
     public List<DiaryDto.CheckCodeResponse> findAllCheckCodes() {
-        // 1. 기존 EyeSymptom.values() 스트림 로직 전면 제거
-        // 2. DB에서 마스터 데이터를 조회하여 DTO로 매핑
         return checkCodeRepository.findAll().stream()
                 .map(code -> DiaryDto.CheckCodeResponse.builder()
                         .checkId(code.getCheckId())
@@ -226,15 +222,12 @@ public class DiaryService {
     }
 
     /**
-     * 엔티티를 DTO로 변환 (증상 리스트 포함 버전)
+     * 🌟 엔티티를 DTO로 변환 (8개 파라미터 규격에 완벽 싱크 결합)
      */
     private DiagnosisResponse convertToDiagnosisResponse(Diagnosis diagnosis) {
         if (diagnosis == null) return null;
 
-        // 1. DB의 "1,3" 문자열을 파싱하여 List<SymptomResponse>로 변환
-        List<DiaryDto.SymptomResponse> parsedSymptoms = parseSymptomIds(diagnosis.getSymptomIds());
-
-        // 2. 수정된 DiagnosisResponse 생성자에 맞게 인자 전달
+        // DTO 데이터 계약 스펙인 정확히 8개의 인자 필드만 순서대로 매핑하여 반환하도록 결함 해제
         return new DiagnosisResponse(
                 diagnosis.getImageUrl(),
                 formatStatus(diagnosis.getTriageKey()),
@@ -243,8 +236,7 @@ public class DiaryService {
                 formatConfidence(diagnosis.getTriageConfidence()),
                 diagnosis.getGuideAction(),
                 diagnosis.getGuideMsg(),
-                diagnosis.getGuideWarn(),
-                parsedSymptoms // [추가된 인자]
+                diagnosis.getGuideWarn()
         );
     }
 
