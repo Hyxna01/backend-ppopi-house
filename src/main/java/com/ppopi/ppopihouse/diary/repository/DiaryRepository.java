@@ -14,5 +14,5 @@ public interface DiaryRepository extends JpaRepository<DiaryEntry, Long> {
     // 일별 조회를 위한 메서드 추가
     List<DiaryEntry> findAllByPetInAndEntryDate(List<Pet> pets, LocalDate entryDate);
 
-    Optional<DiaryEntry> findByPet_PetIdAndEntryDate(Long petId, LocalDate entryDate);
+    Optional<DiaryEntry> findTopByPetAndEntryDateOrderByDiaryIdDesc(Pet pet, LocalDate entryDate);
 }

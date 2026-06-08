@@ -10,12 +10,15 @@ import com.ppopi.ppopihouse.diagnosis.dto.response.DiagnosisResponse;
 import com.ppopi.ppopihouse.diagnosis.dto.response.RecentDiagnosisResponse;
 import com.ppopi.ppopihouse.diagnosis.repository.DiagnosisRepository;
 import com.ppopi.ppopihouse.diagnosis.repository.EyeDiseaseCodeRepository;
+import com.ppopi.ppopihouse.diary.domain.DiaryEntry;
+import com.ppopi.ppopihouse.diary.repository.DiaryRepository;
 import com.ppopi.ppopihouse.global.infra.cloud.ImageStorageService;
 import com.ppopi.ppopihouse.pet.domain.Pet;
 import com.ppopi.ppopihouse.pet.repository.PetRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
@@ -36,9 +39,11 @@ public class DiagnosisService {
     private final ImageValidationClient imageValidationClient;
     private final ImageStorageService imageStorageService;
     private final AiDiagnosisClient aiDiagnosisClient;
+    private final DiaryRepository diaryRepository;
 
+    @Transactional
     public DiagnosisResponse diagnose(
-            Long memberId, 
+            Long memberId,
             Long petId,
             MultipartFile image,
             List<Long> symptomIds
@@ -139,12 +144,36 @@ public class DiagnosisService {
         diagnosis.setGuideAction(aiResponse.getGuidanceAction());
         diagnosis.setGuideWarn(aiResponse.getGuidanceWarning());
 
-        // 6. DB 영속화 레이어 (원본 보존)
         if (aiResponse.getTriageConfidence() >= 0.4f) {
             try {
-                diagnosisRepository.save(diagnosis);
+                Diagnosis savedDiagnosis = diagnosisRepository.save(diagnosis);
+
+                LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+
+                DiaryEntry diaryEntry = diaryRepository
+                        .findTopByPetAndEntryDateOrderByDiaryIdDesc(pet, today)
+                        .orElseGet(() -> {
+                            DiaryEntry newEntry = new DiaryEntry();
+                            newEntry.setPet(pet);
+                            newEntry.setEntryDate(today);
+                            newEntry.setMemo(null);
+                            return newEntry;
+                        });
+
+                diaryEntry.setDiagnosis(savedDiagnosis);
+
+                DiaryEntry savedDiaryEntry = diaryRepository.save(diaryEntry);
+
+                log.info("[DIAGNOSE] 진단 및 다이어리 최신 진단 연결 성공 diagnosisId={}, diaryId={}",
+                        savedDiagnosis.getDiagnosisId(),
+                        savedDiaryEntry.getDiaryId());
+
             } catch (Exception e) {
-                throw new IllegalArgumentException("실패 [영속성 계층 - DB Save]: 진단 결과 테이블 데이터 저장 실패. 제약조건 위반 의심. 원인=" + e.getMessage());
+                log.error("[DIAGNOSE] 진단/다이어리 저장 실패", e);
+                throw new IllegalArgumentException(
+                        "실패 [영속성 계층 - DB Save]: 진단 결과 또는 다이어리 자동 저장 실패. 원인=" + e.getMessage(),
+                        e
+                );
             }
         }
 
