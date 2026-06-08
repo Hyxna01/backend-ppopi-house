@@ -14,6 +14,7 @@ import com.ppopi.ppopihouse.global.infra.cloud.ImageStorageService;
 import com.ppopi.ppopihouse.pet.domain.Pet;
 import com.ppopi.ppopihouse.pet.repository.PetRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class DiagnosisService {
 
@@ -41,34 +43,43 @@ public class DiagnosisService {
             MultipartFile image,
             List<Long> symptomIds
     ) {
-        // 1. 반려동물 검증 레이어 (원본 보존)
+        log.info("[DIAGNOSE] 1. pet 조회 시작 petId={}", petId);
+
         Pet pet = petRepository.findById(petId)
-                .orElseThrow(() -> new IllegalArgumentException("실패 [회원/펫 스코프]: 존재하지 않는 반려동물입니다. petId=" + petId));
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 반려동물입니다."));
 
-        if (!pet.getMember().getMemberId().equals(memberId)) {
-            throw new SecurityException("실패 [보안 인가]: 해당 반려동물에 대한 접근 권한이 없습니다. memberId=" + memberId);
-        }
+        log.info("[DIAGNOSE] 2. pet 조회 성공 petId={}", pet.getPetId());
 
-        // 2. 이미지 유효성 검사 모듈 (원본 보존 및 에러 컨텍스트 강화)
-        ImageValidationResponse validation;
         try {
-            validation = imageValidationClient.validate(image);
+            log.info("[DIAGNOSE] 3. 이미지 검증 API 호출 시작 imageName={}, size={}",
+                    image.getOriginalFilename(), image.getSize());
+
+            ImageValidationResponse validation = imageValidationClient.validate(image);
+
+            log.info("[DIAGNOSE] 4. 이미지 검증 API 응답 validation={}", validation);
         } catch (Exception e) {
-            throw new IllegalArgumentException("실패 [외부 연동 - Validation API]: 이미지 검증 서버(8081) 통신 불가. 원인=" + e.getMessage());
+            log.error("[DIAGNOSE] 이미지 검증 API 호출 실패", e);
+            throw new IllegalArgumentException("이미지 검증 서버 통신 불가. 원인=" + e.getMessage(), e);
         }
 
-        if (validation == null || !validation.isValid()) {
-            throw new IllegalArgumentException(
-                    validation != null ? "실패 [외부 연동 - Validation API 엔진 거부]: " + validation.getMessage() : "이미지 유효성 검사에 실패했습니다."
-            );
-        }
-
-        // 3. Cloudinary 이미지 업로드 마스터 (원본 보존 및 에러 컨텍스트 강화)
         String imageUrl;
         try {
+            log.info("[DIAGNOSE] Cloudinary 업로드 시작 fileName={}, size={}, contentType={}",
+                    image.getOriginalFilename(),
+                    image.getSize(),
+                    image.getContentType());
+
             imageUrl = imageStorageService.upload(image);
+
+            log.info("[DIAGNOSE] Cloudinary 업로드 성공 imageUrl={}", imageUrl);
+
         } catch (Exception e) {
-            throw new IllegalArgumentException("실패 [외부 인프라 - Cloudinary]: 이미지 업로드 실패. 환경변수 점검 필요. 원인=" + e.getMessage());
+            log.error("[DIAGNOSE] Cloudinary 업로드 실패", e);
+
+            throw new IllegalArgumentException(
+                    "실패 [외부 인프라 - Cloudinary]: 이미지 업로드 실패. 환경변수 또는 파일 형식 점검 필요",
+                    e
+            );
         }
 
         List<String> symptoms = symptomIds == null
