@@ -6,11 +6,9 @@ import com.ppopi.ppopihouse.global.exception.ExternalApiException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-
 
 @Component
 @RequiredArgsConstructor
@@ -18,14 +16,17 @@ import org.springframework.web.reactive.function.client.WebClient;
 public class AiDiagnosisClientImpl implements AiDiagnosisClient {
 
     private final WebClient.Builder webClientBuilder;
-    private final ObjectMapper objectMapper;
 
     @Value("${external.ai-api.base-url}")
     private String aiApiBaseUrl;
 
+    @Override
     public AiDiagnosisResponse diagnose(AiDiagnosisRequest request) {
+
         try {
-            log.info("[AI REQUEST] url={}, request={}", aiApiBaseUrl + "/diagnose", request);
+
+            log.info("[AI REQUEST URL] {}", aiApiBaseUrl + "/diagnose");
+            log.info("[AI REQUEST BODY] {}", request);
 
             String rawResponse = webClientBuilder.build()
                     .post()
@@ -38,22 +39,23 @@ public class AiDiagnosisClientImpl implements AiDiagnosisClient {
                     .bodyToMono(String.class)
                     .block();
 
-            log.info("[AI RAW RESPONSE] {}", rawResponse);
+            log.info("==================================================");
+            log.info("[AI RAW RESPONSE]");
+            log.info("{}", rawResponse);
+            log.info("==================================================");
 
-            AiDiagnosisResponse response =
-                    objectMapper.readValue(rawResponse, AiDiagnosisResponse.class);
-
-            log.info("[AI PARSED RESPONSE] disease={}, familyLabel={}, triage={}, confidence={}",
-                    response.getDisease(),
-                    response.getFamilyLabel(),
-                    response.getTriage(),
-                    response.getTriageConfidence());
-
-            return response;
+            throw new RuntimeException(
+                    "AI RAW RESPONSE 확인용 로그. Render 로그에서 [AI RAW RESPONSE] 확인하세요."
+            );
 
         } catch (Exception e) {
-            log.error("[AI ERROR] AI 진단 서버 호출 실패", e);
-            throw new ExternalApiException("AI 진단 서버 호출 중 오류가 발생했습니다. 원인: " + e.getMessage());
+
+            log.error("[AI ERROR]", e);
+
+            throw new ExternalApiException(
+                    "AI 진단 서버 호출 중 오류가 발생했습니다. 원인: "
+                            + e.getMessage()
+            );
         }
     }
 }
