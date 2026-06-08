@@ -98,7 +98,6 @@ public class DiagnosisService {
                 symptoms
         );
 
-        // 4. AI 진단 엔진 통신 (원본 보존 및 에러 컨텍스트 강화)
         AiDiagnosisResponse aiResponse;
         try {
             aiResponse = aiDiagnosisClient.diagnose(aiRequest);
