@@ -51,12 +51,6 @@ public class DiagnosisController {
             @Parameter(description = "선택한 증상 ID 목록", example = "1,2,3")
             @RequestParam(required = false) List<Long> symptomIds
     ) {
-        log.info("[DIAGNOSE CONTROLLER] 진입 petId={}, imageName={}, memberId={}",
-                petId,
-                image != null ? image.getOriginalFilename() : null,
-                userDetails != null ? userDetails.getMemberId() : null);
-
-        // 🌟 서비스 호출 시 memberId를 함께 넘기도록 시그니처 일치화
         return diagnosisService.diagnose(userDetails.getMemberId(), petId, image, symptomIds);
     }
 
