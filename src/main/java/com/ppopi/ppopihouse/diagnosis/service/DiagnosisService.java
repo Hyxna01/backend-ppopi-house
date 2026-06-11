@@ -48,44 +48,12 @@ public class DiagnosisService {
             MultipartFile image,
             List<Long> symptomIds
     ) {
-        log.info("[DIAGNOSE] 1. pet 조회 시작 petId={}", petId);
-
         Pet pet = petRepository.findById(petId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 반려동물입니다."));
 
-        log.info("[DIAGNOSE] 2. pet 조회 성공 petId={}", pet.getPetId());
+        imageValidationClient.validate(image);
 
-        try {
-            log.info("[DIAGNOSE] 3. 이미지 검증 API 호출 시작 imageName={}, size={}",
-                    image.getOriginalFilename(), image.getSize());
-
-            ImageValidationResponse validation = imageValidationClient.validate(image);
-
-            log.info("[DIAGNOSE] 4. 이미지 검증 API 응답 validation={}", validation);
-        } catch (Exception e) {
-            log.error("[DIAGNOSE] 이미지 검증 API 호출 실패", e);
-            throw new IllegalArgumentException("이미지 검증 서버 통신 불가. 원인=" + e.getMessage(), e);
-        }
-
-        String imageUrl;
-        try {
-            log.info("[DIAGNOSE] Cloudinary 업로드 시작 fileName={}, size={}, contentType={}",
-                    image.getOriginalFilename(),
-                    image.getSize(),
-                    image.getContentType());
-
-            imageUrl = imageStorageService.upload(image);
-
-            log.info("[DIAGNOSE] Cloudinary 업로드 성공 imageUrl={}", imageUrl);
-
-        } catch (Exception e) {
-            log.error("[DIAGNOSE] Cloudinary 업로드 실패", e);
-
-            throw new IllegalArgumentException(
-                    "실패 [외부 인프라 - Cloudinary]: 이미지 업로드 실패. 환경변수 또는 파일 형식 점검 필요",
-                    e
-            );
-        }
+        String imageUrl = imageStorageService.upload(image);
 
         List<String> symptoms = symptomIds == null
                 ? List.of()
@@ -103,12 +71,7 @@ public class DiagnosisService {
                 symptoms
         );
 
-        AiDiagnosisResponse aiResponse;
-        try {
-            aiResponse = aiDiagnosisClient.diagnose(aiRequest);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("실패 [외부 연동 - AI Engine]: ngrok 서버 통신 실패. 터널링 상태 확인 필요. 원인=" + e.getMessage());
-        }
+        AiDiagnosisResponse aiResponse = aiDiagnosisClient.diagnose(aiRequest);
 
         String diseaseName = normalizeDiseaseName(aiResponse.getDisease());
         String species = normalizeSpecies(pet.getSpecies());
@@ -145,36 +108,24 @@ public class DiagnosisService {
         diagnosis.setGuideWarn(aiResponse.getGuidanceWarning());
 
         if (aiResponse.getTriageConfidence() >= 0.4f) {
-            try {
-                Diagnosis savedDiagnosis = diagnosisRepository.save(diagnosis);
+            Diagnosis savedDiagnosis = diagnosisRepository.save(diagnosis);
 
-                LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+            LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
 
-                DiaryEntry diaryEntry = diaryRepository
-                        .findTopByPetAndEntryDateOrderByDiaryIdDesc(pet, today)
-                        .orElseGet(() -> {
-                            DiaryEntry newEntry = new DiaryEntry();
-                            newEntry.setPet(pet);
-                            newEntry.setEntryDate(today);
-                            newEntry.setMemo(null);
-                            return newEntry;
-                        });
+            DiaryEntry diaryEntry = diaryRepository
+                    .findTopByPetAndEntryDateOrderByDiaryIdDesc(pet, today)
+                    .orElseGet(() -> {
+                        DiaryEntry newEntry = new DiaryEntry();
+                        newEntry.setPet(pet);
+                        newEntry.setEntryDate(today);
+                        newEntry.setMemo(null);
+                        return newEntry;
+                    });
 
-                diaryEntry.setDiagnosis(savedDiagnosis);
+            diaryEntry.setDiagnosis(savedDiagnosis);
 
-                DiaryEntry savedDiaryEntry = diaryRepository.save(diaryEntry);
+            diaryRepository.save(diaryEntry);
 
-                log.info("[DIAGNOSE] 진단 및 다이어리 최신 진단 연결 성공 diagnosisId={}, diaryId={}",
-                        savedDiagnosis.getDiagnosisId(),
-                        savedDiaryEntry.getDiaryId());
-
-            } catch (Exception e) {
-                log.error("[DIAGNOSE] 진단/다이어리 저장 실패", e);
-                throw new IllegalArgumentException(
-                        "실패 [영속성 계층 - DB Save]: 진단 결과 또는 다이어리 자동 저장 실패. 원인=" + e.getMessage(),
-                        e
-                );
-            }
         }
 
         return new DiagnosisResponse(
@@ -192,20 +143,85 @@ public class DiagnosisService {
     // 하단 유틸리티 및 조회 메서드 명세 원본과 100% 동일하게 유지
     public RecentDiagnosisResponse getTodayDiagnosis(Long memberId, Long petId, LocalDate date) {
         Pet pet = petRepository.findById(petId).orElseThrow(() -> new IllegalArgumentException("존재하지 않는 반려동물입니다."));
-        if (!pet.getMember().getMemberId().equals(memberId)) { throw new SecurityException("해당 반려동물에 대한 접근 권한이 없습니다."); }
-        return diagnosisRepository.findTopByPet_PetIdAndDiagnosisDateOrderByDiagnosisIdDesc(petId, date).map(d -> { List<Long> checkedIds = parseSymptomIds(d.getSymptomIds()); List<RecentDiagnosisResponse.SymptomChecklist> symptoms = buildSymptomChecklist(checkedIds); return toRecentDiagnosisResponse(d, symptoms); }).orElseGet(() -> RecentDiagnosisResponse.empty(buildSymptomChecklist(List.of())));
+        if (!pet.getMember().getMemberId().equals(memberId)) {
+            throw new SecurityException("해당 반려동물에 대한 접근 권한이 없습니다.");
+        }
+        return diagnosisRepository.findTopByPet_PetIdAndDiagnosisDateOrderByDiagnosisIdDesc(petId, date).map(d -> {
+            List<Long> checkedIds = parseSymptomIds(d.getSymptomIds());
+            List<RecentDiagnosisResponse.SymptomChecklist> symptoms = buildSymptomChecklist(checkedIds);
+            return toRecentDiagnosisResponse(d, symptoms);
+        }).orElseGet(() -> RecentDiagnosisResponse.empty(buildSymptomChecklist(List.of())));
     }
-    private int calculateAge(int birthYear) { return Year.now().getValue() - birthYear; }
-    private String formatAffectedArea(String area) { if (area == null) return null; return switch (area) { case "cornea_ulcerative", "cornea_nonulcerative" -> "각막"; case "conjunctiva" -> "결막"; case "eyelid" -> "눈꺼풀"; case "lens_vitreous" -> "수정체/유리체"; case "tear" -> "눈물"; case "normal" -> "정상"; default -> area; }; }
-    private String formatStatus(String triage) { if (triage == null || triage.isBlank()) return "UNKNOWN"; return triage.trim().toUpperCase(); }
-    private String normalizeDiseaseName(String diseaseName) { if (diseaseName == null || diseaseName.isBlank()) { throw new IllegalArgumentException("AI 질병명이 비어 있습니다."); } return switch (diseaseName.toLowerCase()) { case "normal" -> "정상"; default -> diseaseName.trim(); }; }
-    private String normalizeSpecies(String species) { if (species == null || species.isBlank()) { throw new IllegalArgumentException("반려동물 종 정보가 비어 있습니다."); } return switch (species.toLowerCase()) { case "dog", "강아지", "개" -> "DOG"; case "cat", "고양이" -> "CAT"; default -> species.toUpperCase(); }; }
-    private int formatConfidence(double confidence) { return (int) Math.round(confidence * 100); }
-    private RecentDiagnosisResponse toRecentDiagnosisResponse(Diagnosis d, List<RecentDiagnosisResponse.SymptomChecklist> symptoms) { return new RecentDiagnosisResponse(true, d.getImageUrl(), formatStatus(d.getTriageKey()), d.getDisease().getDiseaseName(), formatAffectedArea(d.getDisease().getAffectedArea()), formatConfidence(d.getTriageConfidence()), d.getGuideAction(), d.getGuideMsg(), d.getGuideWarn(), symptoms); }
-    private List<RecentDiagnosisResponse.SymptomChecklist> buildSymptomChecklist(List<Long> checkedIds) { return Arrays.stream(EyeSymptom.values()).filter(symptom -> checkedIds.contains(symptom.getId())).map(symptom -> new RecentDiagnosisResponse.SymptomChecklist(
-            symptom.getId(), symptom.getDescription())).toList(); }
-    private List<Long> parseSymptomIds(String symptomIds) { if (symptomIds == null || symptomIds.isBlank()) { return List.of(); } return Arrays.stream(symptomIds.split(",")).map(String::trim).filter(value -> !value.isBlank()).map(Long::valueOf).toList(); }
-    private String normalizeAffectedArea(String affectedArea) { if (affectedArea == null || affectedArea.isBlank()) { throw new IllegalArgumentException("AI affectedArea 값이 비어 있습니다."); } return affectedArea.trim(); }
+
+    private int calculateAge(int birthYear) {
+        return Year.now().getValue() - birthYear;
+    }
+
+    private String formatAffectedArea(String area) {
+        if (area == null) return null;
+        return switch (area) {
+            case "cornea_ulcerative", "cornea_nonulcerative" -> "각막";
+            case "conjunctiva" -> "결막";
+            case "eyelid" -> "눈꺼풀";
+            case "lens_vitreous" -> "수정체/유리체";
+            case "tear" -> "눈물";
+            case "normal" -> "정상";
+            default -> area;
+        };
+    }
+
+    private String formatStatus(String triage) {
+        if (triage == null || triage.isBlank()) return "UNKNOWN";
+        return triage.trim().toUpperCase();
+    }
+
+    private String normalizeDiseaseName(String diseaseName) {
+        if (diseaseName == null || diseaseName.isBlank()) {
+            throw new IllegalArgumentException("AI 질병명이 비어 있습니다.");
+        }
+        return switch (diseaseName.toLowerCase()) {
+            case "normal" -> "정상";
+            default -> diseaseName.trim();
+        };
+    }
+
+    private String normalizeSpecies(String species) {
+        if (species == null || species.isBlank()) {
+            throw new IllegalArgumentException("반려동물 종 정보가 비어 있습니다.");
+        }
+        return switch (species.toLowerCase()) {
+            case "dog", "강아지", "개" -> "DOG";
+            case "cat", "고양이" -> "CAT";
+            default -> species.toUpperCase();
+        };
+    }
+
+    private int formatConfidence(double confidence) {
+        return (int) Math.round(confidence * 100);
+    }
+
+    private RecentDiagnosisResponse toRecentDiagnosisResponse(Diagnosis d, List<RecentDiagnosisResponse.SymptomChecklist> symptoms) {
+        return new RecentDiagnosisResponse(true, d.getImageUrl(), formatStatus(d.getTriageKey()), d.getDisease().getDiseaseName(), formatAffectedArea(d.getDisease().getAffectedArea()), formatConfidence(d.getTriageConfidence()), d.getGuideAction(), d.getGuideMsg(), d.getGuideWarn(), symptoms);
+    }
+
+    private List<RecentDiagnosisResponse.SymptomChecklist> buildSymptomChecklist(List<Long> checkedIds) {
+        return Arrays.stream(EyeSymptom.values()).filter(symptom -> checkedIds.contains(symptom.getId())).map(symptom -> new RecentDiagnosisResponse.SymptomChecklist(
+                symptom.getId(), symptom.getDescription())).toList();
+    }
+
+    private List<Long> parseSymptomIds(String symptomIds) {
+        if (symptomIds == null || symptomIds.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(symptomIds.split(",")).map(String::trim).filter(value -> !value.isBlank()).map(Long::valueOf).toList();
+    }
+
+    private String normalizeAffectedArea(String affectedArea) {
+        if (affectedArea == null || affectedArea.isBlank()) {
+            throw new IllegalArgumentException("AI affectedArea 값이 비어 있습니다.");
+        }
+        return affectedArea.trim();
+    }
 }
 
 /*
